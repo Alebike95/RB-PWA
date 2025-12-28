@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1.0, user-scalable=yes">
-<title>Roadbook Logger Pro v12</title>
+<title>Roadbook Logger Pro v12.1</title>
 
 <meta name="theme-color" content="#0b0f14">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -16,9 +16,7 @@
   --line:#223; --ok:#4dd4ac; --warn:#ffcc66; --danger:#ff6b6b;
 }
 html, body { 
-    height: 100%; 
-    overflow-y: auto !important; 
-    /* BLOCCA IL PULL-TO-REFRESH */
+    height: 100%; overflow-y: auto !important; 
     overscroll-behavior-y: contain !important;
     touch-action: pan-y !important; 
     margin:0; background:var(--bg); color:#e8eef6; font-family:system-ui; user-select:none;
@@ -137,36 +135,31 @@ const photoIcon = L.divIcon({
     iconSize: [30, 30], iconAnchor: [15, 15]
 });
 
-// DMS FORMATTER RE-ADDED
-function formatDMS(val, isLat) {
+// FORMATO RICHIESTO: N46 12.345 (Gradi Minuti Decimali)
+function formatDDM(val, isLat) {
     const absVal = Math.abs(val);
     const d = Math.floor(absVal);
-    const m = Math.floor((absVal - d) * 60);
-    const s = ((absVal - d - m/60) * 3600).toFixed(2);
+    const m = ((absVal - d) * 60).toFixed(3);
     const hemi = isLat ? (val >= 0 ? 'N' : 'S') : (val >= 0 ? 'E' : 'W');
-    return `${hemi} ${d}° ${m}' ${s}"`;
+    return `${hemi}${d} ${m}`;
 }
 
 async function initApp() {
     loadState();
     startGPS();
     initLongPress();
-    // Chiedi il Wake Lock per non far dormire il GPS
     requestWakeLock();
+    
+    // TRUCCO BACKGROUND: Un loop invisibile che tiene sveglio il processo
+    setInterval(() => { if(state.recording) { console.log("KeepAlive"); } }, 1000);
 }
 
 async function requestWakeLock() {
     if ('wakeLock' in navigator) {
-        try {
-            runtime.wakeLock = await navigator.wakeLock.request('screen');
-            console.log("Wake Lock Attivo");
-        } catch (err) {
-            console.log("Wake Lock non riuscito");
-        }
+        try { runtime.wakeLock = await navigator.wakeLock.request('screen'); } catch (err) {}
     }
 }
 
-// Gestisci il ritorno a schermo
 document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') requestWakeLock();
 });
@@ -316,11 +309,14 @@ document.getElementById("cameraInput").onchange = (e) => {
 };
 
 function exportCSV() {
-    let csv = "ID;ATT;KM_TOT;KM_PARZ;MEDIA;ORA;PRERIL;NOTE;ALT;LAT_DEC;LON_DEC;LAT_DMS;LON_DMS\n";
+    let csv = "ID;ATT;KM_TOT;KM_PARZ;MEDIA;ORA;PRERIL;NOTE;ALT;LAT_DEC;LON_DEC;LAT_DDM;LON_DDM\n";
     state.points.slice().reverse().forEach((p, i) => {
-        csv += `${i+1};${p.att};${p.kmTot.toFixed(3).replace('.',',')};${p.kmParz.toFixed(3).replace('.',',')};${p.avg};${p.time};${p.preRil};${p.note};${p.alt};${p.lat.toFixed(6).replace('.',',')};${p.lon.toFixed(6).replace('.',',')};${formatDMS(p.lat,true)};${formatDMS(p.lon,false)}\n`;
+        // Formato: N45 12.345
+        csv += `${i+1};${p.att};${p.kmTot.toFixed(3).replace('.',',')};${p.kmParz.toFixed(3).replace('.',',')};${p.avg};${p.time};${p.preRil};${p.note};${p.alt};${p.lat.toFixed(6).replace('.',',')};${p.lon.toFixed(6).replace('.',',')};${formatDDM(p.lat,true)};${formatDDM(p.lon,false)}\n`;
     });
-    download(new Blob([csv], {type:"text/csv"}), state.sessionName + ".csv");
+    // Aggiungo il BOM per Excel (evita i caratteri strani tipo Â°)
+    const blob = new Blob(["\uFEFF", csv], {type:"text/csv;charset=utf-8"});
+    download(blob, state.sessionName + ".csv");
 }
 
 async function exportZIP() {
