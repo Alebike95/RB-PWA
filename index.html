@@ -3,13 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1.0, user-scalable=yes">
-<title>Roadbook Logger Pro v5</title>
+<title>Roadbook Logger Pro v6</title>
 
 <meta name="theme-color" content="#0b0f14">
-<link rel="manifest" href="./manifest.json">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
@@ -19,8 +15,7 @@
   --bg:#0b0f14; --card:#121826; --muted:#9fb0c3; --btn:#1b2536;
   --line:#223; --ok:#4dd4ac; --warn:#ffcc66; --danger:#ff6b6b;
 }
-/* Permesso lo scroll verticale */
-body{margin:0;background:var(--bg);color:#e8eef6;font-family:system-ui;user-select:none; overflow-y: auto !important; height: auto !important;}
+body{margin:0;background:var(--bg);color:#e8eef6;font-family:system-ui;user-select:none; overflow-y: auto !important;}
 .card{background:var(--card);border-radius:14px;padding:10px;margin:8px}
 .top-row{display:flex;gap:8px;align-items:stretch}
 .trip-card{flex:1; cursor:pointer;}
@@ -36,7 +31,6 @@ body{margin:0;background:var(--bg);color:#e8eef6;font-family:system-ui;user-sele
 table{width:100%; border-collapse:collapse; font-size:10px}
 td,th{border-bottom:1px solid var(--line); padding:6px; text-align:center;}
 tr.highlight { background: rgba(255, 204, 102, 0.4) !important; transition: background 0.5s; }
-
 .modal { display:none; position:fixed; z-index:10000; left:0; top:0; width:100%; height:100%; background:rgba(0,0,0,0.9); justify-content:center; align-items:center; }
 .modal-content { background:var(--card); padding:20px; border-radius:15px; text-align:center; width:90%; }
 .digit-selector { display:flex; justify-content:center; gap:8px; margin:20px 0; }
@@ -46,7 +40,8 @@ tr.highlight { background: rgba(255, 204, 102, 0.4) !important; transition: back
 .manual-input { width:80%; padding:10px; margin-top:15px; background:#000; border:1px solid #444; color:var(--ok); text-align:center; font-size:18px; }
 .toast{ position:fixed; left:50%; bottom:20px; transform:translateX(-50%); background:#0e1522; border:1px solid var(--line); color:#fff; padding:10px 20px; border-radius:12px; z-index:9999; opacity:0; transition:opacity .2s; pointer-events:none; }
 .toast.show{opacity:1}
-input[type="text"] { background:var(--btn); border:1px solid #333; color:#fff; padding:4px; border-radius:4px; font-size:10px; width:100%; box-sizing:border-box;}
+input[type="text"] { background:var(--btn); border:1px solid #333; color:#fff; padding:4px; border-radius:4px; font-size:10px; width:100%; }
+.photo-icon-div { font-size: 20px; background: white; border-radius: 50%; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; border: 2px solid #2b66ff; color: #2b66ff; }
 </style>
 </head>
 
@@ -73,7 +68,7 @@ input[type="text"] { background:var(--btn); border:1px solid #333; color:#fff; p
 
 <div class="card"><div id="map"><div id="recenter" onclick="recenter()">🎯</div></div></div>
 
-<div class="card" id="parzialeBox" onclick="addPoint()">
+<div class="card" onclick="addPoint()">
   <div class="label">TRIP PARZIALE (TAP = NUOVA NOTA)</div>
   <div class="big" id="odoParz">0.000</div>
 </div>
@@ -122,6 +117,13 @@ const state = {
 
 const map = L.map("map").setView([45, 9], 13);
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
+
+const photoIcon = L.divIcon({
+    className: '',
+    html: '<div class="photo-icon-div">📷</div>',
+    iconSize: [30, 30],
+    iconAnchor: [15, 15]
+});
 
 function initApp() {
     startGPS();
@@ -201,7 +203,7 @@ function addPoint() {
     let now = Date.now();
     let distFromLast = state.odoGhostKm - state.lastPointGhostDist;
     let timeFromLast = state.lastPointTime ? (now - state.lastPointTime)/3600000 : 0;
-    let avg = (timeFromLast > 0) ? (distFromLast/timeFromLast).toFixed(1) : "0.0";
+    let avg = (timeFromLast > 0 && distFromLast > 0.001) ? (distFromLast/timeFromLast).toFixed(1) : "0.0";
 
     state.points.unshift({
         kmTot: state.odoTotKm, kmParz: state.odoParzKm, odoGhost: state.odoGhostKm,
@@ -224,7 +226,8 @@ function renderTable() {
     tb.innerHTML = state.points.map((p, index) => {
         let displayId = state.points.length - index; 
         const m = L.circleMarker([p.lat, p.lon], {radius:7, fillColor:"#4dd4ac", color:"#000", weight:2, fillOpacity:1}).addTo(map);
-        m.on('click', () => { focusTable(displayId); m.bindPopup("Punto " + displayId).openPopup(); });
+        m.bindPopup("Punto " + displayId);
+        m.on('click', () => focusTable(displayId));
         state.markerByDisplayId.set(displayId, m);
 
         return `
@@ -245,7 +248,8 @@ function renderTable() {
 
 function focusMap(lat, lon, id) {
     map.setView([lat, lon], 17);
-    state.markerByDisplayId.get(id).openPopup();
+    const m = state.markerByDisplayId.get(id);
+    if(m) m.openPopup();
 }
 
 function focusTable(id) {
@@ -274,16 +278,16 @@ document.getElementById("cameraInput").onchange = (e) => {
     reader.onload = () => {
         const photo = { lat:state.lastFix.lat, lon:state.lastFix.lon, dataUrl:reader.result };
         state.photos.push(photo);
-        L.marker([photo.lat, photo.lon], {icon: L.icon({iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png', iconSize: [25, 41], iconAnchor: [12, 41]})}).addTo(map);
+        L.marker([photo.lat, photo.lon], {icon: photoIcon}).addTo(map);
         toast("Foto Salvata");
     };
     reader.readAsDataURL(file);
 };
 
 function exportCSV() {
-    let csv = "ID;ATT;KM_TOT;KM_PARZ;MEDIA;ORA;PRERIL;NOTE;ALT;LAT_DEC;LON_DEC;LAT_DMS;LON_DMS;DIST_GHOST\n";
+    let csv = "ID;ATT;KM_TOT;KM_PARZ;DIST_GHOST;MEDIA;ORA;PRERIL;NOTE;ALT;LAT_DEC;LON_DEC;LAT_DMS;LON_DMS\n";
     state.points.slice().reverse().forEach((p, i) => {
-        csv += `${i+1};${p.att};${p.kmTot.toFixed(3).replace('.',',')};${p.kmParz.toFixed(3).replace('.',',')};${p.avg};${p.time};${p.preRil};${p.note};${p.alt};${p.lat.toFixed(6).replace('.',',')};${p.lon.toFixed(6).replace('.',',')};${formatDMS(p.lat,true)};${formatDMS(p.lon,false)};${p.odoGhost.toFixed(3).replace('.',',')}\n`;
+        csv += `${i+1};${p.att};${p.kmTot.toFixed(3).replace('.',',')};${p.kmParz.toFixed(3).replace('.',',')};${p.odoGhost.toFixed(3).replace('.',',')};${p.avg};${p.time};${p.preRil};${p.note};${p.alt};${p.lat.toFixed(6).replace('.',',')};${p.lon.toFixed(6).replace('.',',')};${formatDMS(p.lat,true)};${formatDMS(p.lon,false)}\n`;
     });
     download(new Blob([csv], {type:"text/csv"}), state.sessionName + ".csv");
 }
@@ -291,12 +295,31 @@ function exportCSV() {
 async function exportZIP() {
     const zip = new JSZip();
     let kml = `<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${state.sessionName}</name>`;
-    state.points.forEach((p, i) => { kml += `<Placemark><name>Pnt ${state.points.length-i}</name><Point><coordinates>${p.lon},${p.lat},${p.alt}</coordinates></Point></Placemark>`; });
+    
+    // Stile icone per Google Earth
+    kml += `<Style id="pntIcon"><IconStyle><scale>1.0</scale><Icon><href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href></Icon></IconStyle></Style>`;
+    kml += `<Style id="camIcon"><IconStyle><scale>1.2</scale><Icon><href>http://maps.google.com/mapfiles/kml/shapes/camera.png</href></Icon></IconStyle></Style>`;
+
+    // Tracce
+    state.trackSegments.forEach((seg, i) => {
+        if(seg.length > 1) {
+            let coords = seg.map(p => `${p.lon},${p.lat},${p.alt||0}`).join(" ");
+            kml += `<Placemark><name>Traccia ${i+1}</name><LineString><coordinates>${coords}</coordinates></LineString></Placemark>`;
+        }
+    });
+
+    // Punti
+    state.points.forEach((p, i) => {
+        kml += `<Placemark><name>Pnt ${state.points.length-i}</name><styleUrl>#pntIcon</styleUrl><Point><coordinates>${p.lon},${p.lat},${p.alt}</coordinates></Point></Placemark>`;
+    });
+
+    // Foto
     state.photos.forEach((ph, i) => {
         const name = `foto_${i}.jpg`;
         zip.file("files/"+name, ph.dataUrl.split(',')[1], {base64:true});
-        kml += `<Placemark><name>Foto ${i}</name><description><![CDATA[<img src="files/${name}" width="300"/>]]></description><Point><coordinates>${ph.lon},${ph.lat},0</coordinates></Point></Placemark>`;
+        kml += `<Placemark><name>Foto ${i+1}</name><styleUrl>#camIcon</styleUrl><description><![CDATA[<img src="files/${name}" width="400"/>]]></description><Point><coordinates>${ph.lon},${ph.lat},0</coordinates></Point></Placemark>`;
     });
+
     kml += `</Document></kml>`;
     zip.file(state.sessionName + ".kml", kml);
     const content = await zip.generateAsync({type:"blob"});
@@ -336,10 +359,16 @@ function stepDigit(idx, delta) {
 }
 function saveKmModal() { state.odoTotKm = parseFloat(document.getElementById("fullKmInput").value); updateUI(); closeKmModal(); }
 function closeKmModal() { document.getElementById("kmModal").style.display = 'none'; }
+
 function toggleRec() {
     state.recording = !state.recording;
     document.getElementById("recBtn").textContent = state.recording ? "REC" : "PAUSA";
     document.getElementById("recBtn").className = state.recording ? "rec" : "pause";
+    if (state.recording) {
+        state.currentSegment = [];
+        state.trackSegments.push(state.currentSegment);
+        state.trackLines.push(L.polyline([], {color: "#4dd4ac", weight:4, opacity: 0.8}).addTo(map));
+    }
 }
 function toast(m) { let t = document.getElementById("toast"); t.textContent = m; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 2000); }
 function recenter() { if(state.lastFix) map.setView([state.lastFix.lat, state.lastFix.lon], 16); }
