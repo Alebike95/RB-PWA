@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1.0, user-scalable=yes">
-<title>Roadbook Logger Pro v11</title>
+<title>Roadbook Logger Pro v12</title>
 
 <meta name="theme-color" content="#0b0f14">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -16,7 +16,11 @@
   --line:#223; --ok:#4dd4ac; --warn:#ffcc66; --danger:#ff6b6b;
 }
 html, body { 
-    height: 100%; overflow-y: auto !important; touch-action: pan-y !important; 
+    height: 100%; 
+    overflow-y: auto !important; 
+    /* BLOCCA IL PULL-TO-REFRESH */
+    overscroll-behavior-y: contain !important;
+    touch-action: pan-y !important; 
     margin:0; background:var(--bg); color:#e8eef6; font-family:system-ui; user-select:none;
 }
 .card{background:var(--card);border-radius:14px;padding:10px;margin:8px; touch-action: auto;}
@@ -120,11 +124,8 @@ let state = {
   trackSegments: [], points: [], photos: []
 };
 
-// Variabili runtime (non salvate)
 let runtime = {
-  currentPolyline: null,
-  markerByDisplayId: new Map(),
-  trackLines: []
+  currentPolyline: null, markerByDisplayId: new Map(), trackLines: [], wakeLock: null
 };
 
 const map = L.map("map", { tap: false }).setView([45, 9], 13);
@@ -136,13 +137,40 @@ const photoIcon = L.divIcon({
     iconSize: [30, 30], iconAnchor: [15, 15]
 });
 
-function initApp() {
+// DMS FORMATTER RE-ADDED
+function formatDMS(val, isLat) {
+    const absVal = Math.abs(val);
+    const d = Math.floor(absVal);
+    const m = Math.floor((absVal - d) * 60);
+    const s = ((absVal - d - m/60) * 3600).toFixed(2);
+    const hemi = isLat ? (val >= 0 ? 'N' : 'S') : (val >= 0 ? 'E' : 'W');
+    return `${hemi} ${d}° ${m}' ${s}"`;
+}
+
+async function initApp() {
     loadState();
     startGPS();
     initLongPress();
+    // Chiedi il Wake Lock per non far dormire il GPS
+    requestWakeLock();
 }
 
-// SALVATAGGIO / CARICAMENTO
+async function requestWakeLock() {
+    if ('wakeLock' in navigator) {
+        try {
+            runtime.wakeLock = await navigator.wakeLock.request('screen');
+            console.log("Wake Lock Attivo");
+        } catch (err) {
+            console.log("Wake Lock non riuscito");
+        }
+    }
+}
+
+// Gestisci il ritorno a schermo
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') requestWakeLock();
+});
+
 function saveState() {
     localStorage.setItem('rb_logger_state', JSON.stringify(state));
 }
@@ -151,35 +179,21 @@ function loadState() {
     const saved = localStorage.getItem('rb_logger_state');
     if (saved) {
         state = JSON.parse(saved);
-        state.recording = false; // Forza pausa all'avvio per sicurezza
-        updateUI();
-        refreshTableUI();
-        
-        // Ricostruisci tracce grafiche
+        state.recording = false; 
+        updateUI(); refreshTableUI();
         state.trackSegments.forEach(seg => {
             if(seg.length > 1) {
                 const line = L.polyline(seg.map(p => [p.lat, p.lon]), {color: "#4dd4ac", weight:4, opacity: 0.8}).addTo(map);
                 runtime.trackLines.push(line);
             }
         });
-
-        // Ricostruisci icone foto
-        state.photos.forEach(ph => {
-            L.marker([ph.lat, ph.lon], {icon: photoIcon}).addTo(map);
-        });
-
-        if(state.points.length > 0) {
-            const lastP = state.points[0];
-            map.setView([lastP.lat, lastP.lon], 15);
-        }
+        state.photos.forEach(ph => { L.marker([ph.lat, ph.lon], {icon: photoIcon}).addTo(map); });
+        if(state.points.length > 0) map.setView([state.points[0].lat, state.points[0].lon], 15);
     }
 }
 
 function clearFullSession() {
-    if(confirm("ATTENZIONE: Questo cancellerà definitivamente tutti i punti, le foto e la traccia attuale dal telefono. Hai già esportato i dati?")) {
-        localStorage.removeItem('rb_logger_state');
-        location.reload();
-    }
+    if(confirm("CANCELLARE TUTTO?")) { localStorage.removeItem('rb_logger_state'); location.reload(); }
 }
 
 function initLongPress() {
@@ -187,20 +201,14 @@ function initLongPress() {
     let timer;
     const start = () => { timer = setTimeout(() => { 
         state.odoTotKm = 0; state.odoParzKm = 0; 
-        updateUI(); saveState();
-        toast("Trip Reset"); if(navigator.vibrate) navigator.vibrate(200); 
+        updateUI(); saveState(); toast("Trip Reset"); 
     }, 2000); };
-    const end = () => clearTimeout(timer);
-    el.onmousedown = start; el.onmouseup = end; el.ontouchstart = start; el.ontouchend = end;
+    el.ontouchstart = start; el.ontouchend = () => clearTimeout(timer);
 }
 
 function setSessionName() {
     let n = prompt("Nome del file:", state.sessionName);
     if(n) { state.sessionName = n.replace(/\s+/g, '_'); saveState(); }
-}
-
-function resetGhost() {
-    if(confirm("Azzerare Ghost Trip?")) { state.odoGhostKm = 0; state.lastPointGhostDist = 0; updateUI(); saveState(); }
 }
 
 function startGPS() {
@@ -219,17 +227,14 @@ function onFix(pos) {
         let dist = calculateDistance(state.lastFix.lat, state.lastFix.lon, crd.latitude, crd.longitude);
         let dKm = dist / 1000;
         state.odoGhostKm += dKm;
-        
         if (state.recording) {
-            state.odoTotKm += dKm; 
-            state.odoParzKm += dKm;
+            state.odoTotKm += dKm; state.odoParzKm += dKm;
             if (runtime.currentPolyline) {
                 const pnt = {lat: crd.latitude, lon: crd.longitude, alt: crd.altitude, timeMs: now};
                 state.trackSegments[state.trackSegments.length-1].push(pnt);
                 runtime.currentPolyline.addLatLng([crd.latitude, crd.longitude]);
             }
-            // Salviamo ogni 5 secondi per non stressare il disco, o ad ogni punto
-            if(Math.random() > 0.95) saveState(); 
+            if(Math.random() > 0.98) saveState(); 
         }
         updateUI();
     }
@@ -267,9 +272,7 @@ function addPoint() {
     state.lastPointGhostDist = state.odoGhostKm;
     state.lastPointTime = now;
     state.odoParzKm = 0;
-    updateUI();
-    refreshTableUI();
-    saveState();
+    updateUI(); refreshTableUI(); saveState();
 }
 
 function refreshTableUI() {
@@ -277,66 +280,28 @@ function refreshTableUI() {
     tb.innerHTML = "";
     runtime.markerByDisplayId.forEach(m => map.removeLayer(m));
     runtime.markerByDisplayId.clear();
-
     let prevTot = 0;
     const chronPoints = [...state.points].reverse();
     chronPoints.forEach((p, i) => {
         p.kmParz = (i === 0) ? p.kmTot : (p.kmTot - prevTot);
         prevTot = p.kmTot;
     });
-
     state.points.forEach((p, index) => {
         const displayId = state.points.length - index;
         const m = L.circleMarker([p.lat, p.lon], {radius:7, fillColor:"#4dd4ac", color:"#000", weight:2, fillOpacity:1}).addTo(map);
         m.bindPopup("Punto " + displayId);
-        m.on('click', () => focusTable(displayId));
         runtime.markerByDisplayId.set(displayId, m);
-
         const row = document.createElement('tr');
         row.id = `row-${displayId}`;
-        row.onclick = () => focusMap(p.lat, p.lon, displayId);
-        row.innerHTML = `
-            <td>${displayId}</td>
-            <td><input type="text" oninput="state.points[${index}].att=this.value; saveState()" value="${p.att}"></td>
-            <td style="font-weight:bold">${p.kmTot.toFixed(3)}</td>
-            <td>${p.kmParz.toFixed(3)}</td>
-            <td style="color:var(--warn)">${p.avg}</td>
-            <td>${p.time}</td>
-            <td><input type="text" oninput="state.points[${index}].preRil=this.value; saveState()" value="${p.preRil}"></td>
-            <td><input type="text" oninput="state.points[${index}].note=this.value; saveState()" value="${p.note}"></td>
-            <td onclick="event.stopPropagation(); deletePoint(${index})">🗑</td>
-        `;
+        row.onclick = () => { map.setView([p.lat, p.lon], 17); m.openPopup(); };
+        row.innerHTML = `<td>${displayId}</td><td><input type="text" oninput="state.points[${index}].att=this.value; saveState()" value="${p.att}"></td><td style="font-weight:bold">${p.kmTot.toFixed(3)}</td><td>${p.kmParz.toFixed(3)}</td><td style="color:var(--warn)">${p.avg}</td><td>${p.time}</td><td><input type="text" oninput="state.points[${index}].preRil=this.value; saveState()" value="${p.preRil}"></td><td><input type="text" oninput="state.points[${index}].note=this.value; saveState()" value="${p.note}"></td><td onclick="event.stopPropagation(); deletePoint(${index})">🗑</td>`;
         tb.appendChild(row);
     });
 }
 
-function deletePoint(index) {
-    if(!confirm("Eliminare punto?")) return;
-    state.points.splice(index, 1);
-    refreshTableUI();
-    saveState();
-}
+function deletePoint(index) { if(confirm("Eliminare?")) { state.points.splice(index,1); refreshTableUI(); saveState(); } }
 
-function focusMap(lat, lon, id) {
-    map.setView([lat, lon], 17);
-    const m = runtime.markerByDisplayId.get(id);
-    if(m) setTimeout(() => m.openPopup(), 150);
-}
-
-function focusTable(id) {
-    const el = document.getElementById(`row-${id}`);
-    if(el) {
-        el.scrollIntoView({behavior:'smooth', block:'center'});
-        el.classList.add('highlight');
-        setTimeout(() => el.classList.remove('highlight'), 2000);
-    }
-}
-
-function takePhoto() {
-    if (!state.lastFix) return;
-    document.getElementById("cameraInput").click();
-}
-
+function takePhoto() { if (state.lastFix) document.getElementById("cameraInput").click(); }
 document.getElementById("cameraInput").onchange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -345,17 +310,15 @@ document.getElementById("cameraInput").onchange = (e) => {
         const photo = { lat:state.lastFix.lat, lon:state.lastFix.lon, dataUrl:reader.result };
         state.photos.push(photo);
         L.marker([photo.lat, photo.lon], {icon: photoIcon}).addTo(map);
-        saveState();
-        toast("Foto Salvata");
+        saveState(); toast("Foto OK");
     };
     reader.readAsDataURL(file);
 };
 
-// EXPORT (identici a v10)
 function exportCSV() {
-    let csv = "ID;ATT;KM_TOT;KM_PARZ;DIST_GHOST;MEDIA;ORA;PRERIL;NOTE;ALT;LAT_DEC;LON_DEC\n";
+    let csv = "ID;ATT;KM_TOT;KM_PARZ;MEDIA;ORA;PRERIL;NOTE;ALT;LAT_DEC;LON_DEC;LAT_DMS;LON_DMS\n";
     state.points.slice().reverse().forEach((p, i) => {
-        csv += `${i+1};${p.att};${p.kmTot.toFixed(3).replace('.',',')};${p.kmParz.toFixed(3).replace('.',',')};${p.odoGhost.toFixed(3).replace('.',',')};${p.avg};${p.time};${p.preRil};${p.note};${p.alt};${p.lat.toFixed(6).replace('.',',')};${p.lon.toFixed(6).replace('.',',')}\n`;
+        csv += `${i+1};${p.att};${p.kmTot.toFixed(3).replace('.',',')};${p.kmParz.toFixed(3).replace('.',',')};${p.avg};${p.time};${p.preRil};${p.note};${p.alt};${p.lat.toFixed(6).replace('.',',')};${p.lon.toFixed(6).replace('.',',')};${formatDMS(p.lat,true)};${formatDMS(p.lon,false)}\n`;
     });
     download(new Blob([csv], {type:"text/csv"}), state.sessionName + ".csv");
 }
@@ -366,7 +329,6 @@ async function exportZIP() {
     kml += `<Style id="trackStyle"><LineStyle><color>ccdbd44d</color><width>5</width></LineStyle></Style>`;
     kml += `<Style id="pntIcon"><IconStyle><Icon><href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href></Icon></IconStyle></Style>`;
     kml += `<Style id="camIcon"><IconStyle><Icon><href>http://maps.google.com/mapfiles/kml/shapes/camera.png</href></Icon></IconStyle></Style>`;
-    
     kml += `<Folder><name>TRACCE</name>`;
     state.trackSegments.forEach((seg, i) => {
         if(seg.length > 1) {
@@ -375,9 +337,7 @@ async function exportZIP() {
         }
     });
     kml += `</Folder><Folder><name>PUNTI</name>`;
-    state.points.slice().reverse().forEach((p, i) => {
-        kml += `<Placemark><name>${i+1}</name><styleUrl>#pntIcon</styleUrl><Point><coordinates>${p.lon},${p.lat},${p.alt}</coordinates></Point></Placemark>`;
-    });
+    state.points.slice().reverse().forEach((p, i) => { kml += `<Placemark><name>${i+1}</name><styleUrl>#pntIcon</styleUrl><Point><coordinates>${p.lon},${p.lat},${p.alt}</coordinates></Point></Placemark>`; });
     kml += `</Folder><Folder><name>FOTO</name>`;
     state.photos.forEach((ph, i) => {
         const name = `foto_${i+1}.jpg`;
@@ -396,12 +356,8 @@ function exportGPX() {
     gpx += `</gpx>`;
     download(new Blob([gpx], {type:"application/gpx+xml"}), state.sessionName + ".gpx");
 }
+function download(blob, name) { const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; a.click(); }
 
-function download(blob, name) {
-    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; a.click();
-}
-
-// MODAL KM
 function openKmModal() {
     const val = state.odoTotKm.toFixed(3).padStart(7, '0');
     document.getElementById("fullKmInput").value = state.odoTotKm.toFixed(3);
@@ -410,8 +366,7 @@ function openKmModal() {
 }
 function renderDigitSelectors(val) {
     const container = document.getElementById("digitSelectors");
-    container.innerHTML = '';
-    let digitIdx = 0;
+    container.innerHTML = ''; let digitIdx = 0;
     [...val].forEach((char) => {
         if(char === '.') container.insertAdjacentHTML('beforeend', '<div class="digit-val">.</div>');
         else {
@@ -430,8 +385,7 @@ function syncInputFromDigits() {
     let s = ""; let digitIdx = 0;
     const currentVal = parseFloat(document.getElementById("fullKmInput").value || 0).toFixed(3).padStart(7, '0');
     [...currentVal].forEach(char => {
-        if(char === '.') s += '.';
-        else { s += document.getElementById(`digit-${digitIdx}`).innerText; digitIdx++; }
+        if(char === '.') s += '.'; else { s += document.getElementById(`digit-${digitIdx}`).innerText; digitIdx++; }
     });
     document.getElementById("fullKmInput").value = parseFloat(s).toFixed(3);
 }
@@ -441,8 +395,7 @@ function syncDigitsFromInput() {
 }
 function saveKmModal() {
     state.odoTotKm = parseFloat(document.getElementById("fullKmInput").value);
-    updateUI(); saveState();
-    closeKmModal();
+    updateUI(); saveState(); closeKmModal();
 }
 function closeKmModal() { document.getElementById("kmModal").style.display = 'none'; }
 
