@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1.0, user-scalable=yes">
-<title>Roadbook Logger Pro v8</title>
+<title>Roadbook Logger Pro v9</title>
 
 <meta name="theme-color" content="#0b0f14">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -94,7 +94,7 @@ input[type="text"] { background:var(--btn); border:1px solid #333; color:#fff; p
     <div class="modal-content">
         <div class="label">Modifica Cifre</div>
         <div class="digit-selector" id="digitSelectors"></div>
-        <input type="number" step="0.001" id="fullKmInput" class="manual-input">
+        <input type="number" step="0.001" id="fullKmInput" class="manual-input" oninput="syncDigitsFromInput()">
         <div style="margin-top:25px; display:flex; gap:10px;">
             <button onclick="saveKmModal()" style="flex:1; background:var(--ok); color:#000; font-weight:bold; height:50px; border-radius:10px;">CONFERMA</button>
             <button onclick="closeKmModal()" style="flex:1; height:50px; border-radius:10px;">ANNULLA</button>
@@ -115,7 +115,7 @@ const state = {
   markerByDisplayId: new Map()
 };
 
-const map = L.map("map", { tap: false, zoomAnimation: true }).setView([45, 9], 13);
+const map = L.map("map", { tap: false }).setView([45, 9], 13);
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
 
 const photoIcon = L.divIcon({
@@ -154,7 +154,6 @@ function startGPS() {
 function onFix(pos) {
     const crd = pos.coords;
     const now = Date.now();
-    
     if (state.lastFixTimeMs) document.getElementById("hz").textContent = (1000 / (now - state.lastFixTimeMs)).toFixed(1) + " Hz";
     state.lastFixTimeMs = now;
     document.getElementById("acc").textContent = "±" + Math.round(crd.accuracy) + "m";
@@ -164,7 +163,6 @@ function onFix(pos) {
         let dist = calculateDistance(state.lastFix.lat, state.lastFix.lon, crd.latitude, crd.longitude);
         let dKm = dist / 1000;
         state.odoGhostKm += dKm;
-        
         if (state.recording) {
             state.odoTotKm += dKm; 
             state.odoParzKm += dKm;
@@ -213,58 +211,49 @@ function addPoint() {
         alt: state.lastFix.alt ? Math.round(state.lastFix.alt) : 0,
         att: "", preRil: "", note: ""
     };
-
     state.points.unshift(p);
     state.lastPointGhostDist = state.odoGhostKm;
     state.lastPointTime = now;
     state.odoParzKm = 0;
     updateUI();
-    
-    // Invece di renderTable completo, aggiungo solo il nuovo punto
-    const displayId = state.points.length;
-    addPointToUI(p, displayId);
+    refreshTableUI();
 }
 
-function addPointToUI(p, id) {
+function refreshTableUI() {
     const tb = document.getElementById("pointsBody");
-    
-    // Crea Marker
-    const m = L.circleMarker([p.lat, p.lon], {radius:7, fillColor:"#4dd4ac", color:"#000", weight:2, fillOpacity:1}).addTo(map);
-    m.bindPopup("Punto " + id);
-    m.on('click', () => focusTable(id));
-    state.markerByDisplayId.set(id, m);
+    tb.innerHTML = "";
+    state.markerByDisplayId.forEach(m => map.removeLayer(m));
+    state.markerByDisplayId.clear();
 
-    // Aggiungi riga in cima (HTML)
-    const row = document.createElement('tr');
-    row.id = `row-${id}`;
-    row.onclick = () => focusMap(p.lat, p.lon, id);
-    row.innerHTML = `
-        <td>${id}</td>
-        <td><input type="text" oninput="updatePointData(${id}, 'att', this.value)" value="${p.att}"></td>
-        <td style="font-weight:bold">${p.kmTot.toFixed(3)}</td>
-        <td>${p.kmParz.toFixed(3)}</td>
-        <td style="color:var(--warn)">${p.avg}</td>
-        <td>${p.time}</td>
-        <td><input type="text" oninput="updatePointData(${id}, 'preRil', this.value)" value="${p.preRil}"></td>
-        <td><input type="text" oninput="updatePointData(${id}, 'note', this.value)" value="${p.note}"></td>
-        <td onclick="event.stopPropagation(); deletePointUI(${id})">🗑</td>
-    `;
-    tb.insertBefore(row, tb.firstChild);
+    state.points.forEach((p, index) => {
+        const displayId = state.points.length - index;
+        const m = L.circleMarker([p.lat, p.lon], {radius:7, fillColor:"#4dd4ac", color:"#000", weight:2, fillOpacity:1}).addTo(map);
+        m.bindPopup("Punto " + displayId);
+        m.on('click', () => focusTable(displayId));
+        state.markerByDisplayId.set(displayId, m);
+
+        const row = document.createElement('tr');
+        row.id = `row-${displayId}`;
+        row.onclick = () => focusMap(p.lat, p.lon, displayId);
+        row.innerHTML = `
+            <td>${displayId}</td>
+            <td><input type="text" oninput="state.points[${index}].att=this.value" value="${p.att}"></td>
+            <td style="font-weight:bold">${p.kmTot.toFixed(3)}</td>
+            <td>${p.kmParz.toFixed(3)}</td>
+            <td style="color:var(--warn)">${p.avg}</td>
+            <td>${p.time}</td>
+            <td><input type="text" oninput="state.points[${index}].preRil=this.value" value="${p.preRil}"></td>
+            <td><input type="text" oninput="state.points[${index}].note=this.value" value="${p.note}"></td>
+            <td onclick="event.stopPropagation(); deletePoint(${index})">🗑</td>
+        `;
+        tb.appendChild(row);
+    });
 }
 
-function updatePointData(id, field, value) {
-    // Trova il punto nell'array (attenzione: l'array è invertito)
-    const index = state.points.length - id;
-    if(state.points[index]) state.points[index][field] = value;
-}
-
-function deletePointUI(id) {
-    if(!confirm("Eliminare punto " + id + "?")) return;
-    const index = state.points.length - id;
+function deletePoint(index) {
+    if(!confirm("Eliminare questo punto?")) return;
     state.points.splice(index, 1);
-    const m = state.markerByDisplayId.get(id);
-    if(m) map.removeLayer(m);
-    document.getElementById(`row-${id}`).remove();
+    refreshTableUI();
 }
 
 function focusMap(lat, lon, id) {
@@ -312,13 +301,15 @@ async function exportZIP() {
     const zip = new JSZip();
     let kml = `<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${state.sessionName}</name>`;
     
+    // Stile Traccia: Spessore 5, Colore Turchese Fluo (AABBGGRR)
+    kml += `<Style id="trackStyle"><LineStyle><color>ccdbd44d</color><width>5</width></LineStyle></Style>`;
     kml += `<Style id="pntIcon"><IconStyle><Icon><href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href></Icon></IconStyle></Style>`;
     kml += `<Style id="camIcon"><IconStyle><Icon><href>http://maps.google.com/mapfiles/kml/shapes/camera.png</href></Icon></IconStyle></Style>`;
 
     state.trackSegments.forEach((seg, i) => {
         if(seg.length > 1) {
             let coords = seg.map(p => `${p.lon},${p.lat},${p.alt||0}`).join(" ");
-            kml += `<Placemark><name>T${i+1}</name><LineString><coordinates>${coords}</coordinates></LineString></Placemark>`;
+            kml += `<Placemark><name>T${i+1}</name><styleUrl>#trackStyle</styleUrl><LineString><coordinates>${coords}</coordinates></LineString></Placemark>`;
         }
     });
 
@@ -352,6 +343,10 @@ function download(blob, name) {
 function openKmModal() {
     const val = state.odoTotKm.toFixed(3).padStart(7, '0');
     document.getElementById("fullKmInput").value = state.odoTotKm.toFixed(3);
+    renderDigitSelectors(val);
+    document.getElementById("kmModal").style.display = 'flex';
+}
+function renderDigitSelectors(val) {
     const container = document.getElementById("digitSelectors");
     container.innerHTML = '';
     let digitIdx = 0;
@@ -363,13 +358,31 @@ function openKmModal() {
             digitIdx++;
         }
     });
-    document.getElementById("kmModal").style.display = 'flex';
 }
 function stepDigit(idx, delta) {
     const el = document.getElementById(`digit-${idx}`);
     el.innerText = (parseInt(el.innerText) + delta + 10) % 10;
+    syncInputFromDigits();
 }
-function saveKmModal() { state.odoTotKm = parseFloat(document.getElementById("fullKmInput").value); updateUI(); closeKmModal(); }
+function syncInputFromDigits() {
+    let s = "";
+    let digitIdx = 0;
+    const currentVal = state.odoTotKm.toFixed(3).padStart(7, '0');
+    [...currentVal].forEach(char => {
+        if(char === '.') s += '.';
+        else { s += document.getElementById(`digit-${digitIdx}`).innerText; digitIdx++; }
+    });
+    document.getElementById("fullKmInput").value = parseFloat(s).toFixed(3);
+}
+function syncDigitsFromInput() {
+    const val = parseFloat(document.getElementById("fullKmInput").value || 0).toFixed(3).padStart(7, '0');
+    renderDigitSelectors(val);
+}
+function saveKmModal() {
+    state.odoTotKm = parseFloat(document.getElementById("fullKmInput").value);
+    updateUI();
+    closeKmModal();
+}
 function closeKmModal() { document.getElementById("kmModal").style.display = 'none'; }
 
 function toggleRec() {
