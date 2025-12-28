@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1.0, user-scalable=yes">
-<title>Roadbook Logger Pro v12.1</title>
+<title>Roadbook Logger Pro v12.1.1</title>
 
 <meta name="theme-color" content="#0b0f14">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -22,7 +22,16 @@ html, body {
     margin:0; background:var(--bg); color:#e8eef6; font-family:system-ui; user-select:none;
 }
 .card{background:var(--card);border-radius:14px;padding:10px;margin:8px; touch-action: auto;}
-.top-row{display:flex;gap:8px;align-items:stretch}
+.top-row{display:flex;gap:8px;align-items:stretch; position:relative;}
+
+/* BADGE VERSIONE */
+.ver-badge {
+    position: absolute; top: -5px; right: 5px;
+    font-size: 9px; font-family: monospace;
+    background: var(--btn); color: var(--muted);
+    padding: 2px 6px; border-radius: 10px; border: 1px solid var(--line);
+}
+
 .trip-card{flex:1; cursor:pointer;}
 .photo-btn{ width:56px; background:var(--btn); border-radius:14px; display:flex; align-items:center; justify-content:center; font-size:26px; }
 .big{ font-size:52px; font-family:monospace; line-height:1; text-align:right; padding-right:1ch; color:#fff; }
@@ -54,6 +63,7 @@ input[type="text"] { background:var(--btn); border:1px solid #333; color:#fff; p
 <body onload="initApp()">
 
 <div class="top-row">
+  <div class="ver-badge">v12.1.1</div>
   <div class="card trip-card" id="mainTripBox" onclick="openKmModal()">
     <div class="label">TRIP TOTALE (Hold 3s to Reset)</div>
     <div class="big" id="odoTot">0.000</div>
@@ -115,6 +125,8 @@ input[type="text"] { background:var(--btn); border:1px solid #333; color:#fff; p
 <div id="toast" class="toast"></div>
 
 <script>
+const APP_VERSION = "12.1.1";
+
 let state = {
   recording: false, lastFix: null, lastFixTimeMs: null, sessionName: "Roadbook_Log",
   odoTotKm: 0, odoParzKm: 0, odoGhostKm: 0,
@@ -135,7 +147,6 @@ const photoIcon = L.divIcon({
     iconSize: [30, 30], iconAnchor: [15, 15]
 });
 
-// FORMATO RICHIESTO: N46 12.345 (Gradi Minuti Decimali)
 function formatDDM(val, isLat) {
     const absVal = Math.abs(val);
     const d = Math.floor(absVal);
@@ -149,9 +160,7 @@ async function initApp() {
     startGPS();
     initLongPress();
     requestWakeLock();
-    
-    // TRUCCO BACKGROUND: Un loop invisibile che tiene sveglio il processo
-    setInterval(() => { if(state.recording) { console.log("KeepAlive"); } }, 1000);
+    setInterval(() => { if(state.recording) { console.log("KeepAlive_v" + APP_VERSION); } }, 1000);
 }
 
 async function requestWakeLock() {
@@ -311,10 +320,8 @@ document.getElementById("cameraInput").onchange = (e) => {
 function exportCSV() {
     let csv = "ID;ATT;KM_TOT;KM_PARZ;MEDIA;ORA;PRERIL;NOTE;ALT;LAT_DEC;LON_DEC;LAT_DDM;LON_DDM\n";
     state.points.slice().reverse().forEach((p, i) => {
-        // Formato: N45 12.345
         csv += `${i+1};${p.att};${p.kmTot.toFixed(3).replace('.',',')};${p.kmParz.toFixed(3).replace('.',',')};${p.avg};${p.time};${p.preRil};${p.note};${p.alt};${p.lat.toFixed(6).replace('.',',')};${p.lon.toFixed(6).replace('.',',')};${formatDDM(p.lat,true)};${formatDDM(p.lon,false)}\n`;
     });
-    // Aggiungo il BOM per Excel (evita i caratteri strani tipo Â°)
     const blob = new Blob(["\uFEFF", csv], {type:"text/csv;charset=utf-8"});
     download(blob, state.sessionName + ".csv");
 }
