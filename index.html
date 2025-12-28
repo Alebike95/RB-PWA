@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1.0, user-scalable=yes">
-<title>Roadbook Logger Pro v9</title>
+<title>Roadbook Logger Pro v10</title>
 
 <meta name="theme-color" content="#0b0f14">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -15,8 +15,14 @@
   --bg:#0b0f14; --card:#121826; --muted:#9fb0c3; --btn:#1b2536;
   --line:#223; --ok:#4dd4ac; --warn:#ffcc66; --danger:#ff6b6b;
 }
-body{margin:0;background:var(--bg);color:#e8eef6;font-family:system-ui;user-select:none; overflow-y: auto !important;}
-.card{background:var(--card);border-radius:14px;padding:10px;margin:8px}
+/* FIX SCROLL PER DISPOSITIVI VECCHI */
+html, body { 
+    height: 100%; 
+    overflow-y: auto !important; 
+    touch-action: pan-y !important; 
+    margin:0; background:var(--bg); color:#e8eef6; font-family:system-ui; user-select:none;
+}
+.card{background:var(--card);border-radius:14px;padding:10px;margin:8px; touch-action: auto;}
 .top-row{display:flex;gap:8px;align-items:stretch}
 .trip-card{flex:1; cursor:pointer;}
 .photo-btn{ width:56px; background:var(--btn); border-radius:14px; display:flex; align-items:center; justify-content:center; font-size:26px; }
@@ -26,7 +32,7 @@ body{margin:0;background:var(--bg);color:#e8eef6;font-family:system-ui;user-sele
 .gps-info{flex:1; display:flex; gap:10px; justify-content:center; font-size:11px;}
 #recBtn.rec{color:var(--ok); font-weight:bold;}
 #recBtn.pause{color:var(--warn)}
-#map{height:250px; border-radius:14px; position:relative}
+#map{height:250px; border-radius:14px; position:relative; touch-action: none;}
 #recenter{ position:absolute; bottom:12px; right:12px; z-index:2000; background:var(--btn); border-radius:50%; width:40px; height:40px; display:flex; align-items:center; justify-content:center; font-size:20px; }
 table{width:100%; border-collapse:collapse; font-size:10px}
 td,th{border-bottom:1px solid var(--line); padding:6px; text-align:center;}
@@ -115,7 +121,7 @@ const state = {
   markerByDisplayId: new Map()
 };
 
-const map = L.map("map", { tap: false }).setView([45, 9], 13);
+const map = L.map("map", { tap: false, dragging: true }).setView([45, 9], 13);
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
 
 const photoIcon = L.divIcon({
@@ -133,7 +139,15 @@ function initApp() {
 function initLongPress() {
     const el = document.getElementById('mainTripBox');
     let timer;
-    const start = () => { timer = setTimeout(() => { state.odoTotKm = 0; updateUI(); toast("Trip Totale Azzerato"); if(navigator.vibrate) navigator.vibrate(200); }, 3000); };
+    const start = () => { 
+        timer = setTimeout(() => { 
+            state.odoTotKm = 0; 
+            state.odoParzKm = 0; // AZZERA ANCHE IL PARZIALE
+            updateUI(); 
+            toast("Trip Totale e Parziale Azzerati"); 
+            if(navigator.vibrate) navigator.vibrate(200); 
+        }, 2000); 
+    };
     const end = () => clearTimeout(timer);
     el.onmousedown = start; el.onmouseup = end; el.ontouchstart = start; el.ontouchend = end;
 }
@@ -183,14 +197,6 @@ function calculateDistance(lat1, lon1, lat2, lon2) {
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
-function formatDMS(val, isLat) {
-    const absVal = Math.abs(val);
-    const d = Math.floor(absVal);
-    const m = ((absVal - d) * 60).toFixed(3);
-    const hemi = isLat ? (val >= 0 ? 'N' : 'S') : (val >= 0 ? 'E' : 'W');
-    return `${hemi}${d} ${m}`;
-}
-
 function updateUI() {
     document.getElementById("odoTot").textContent = state.odoTotKm.toFixed(3);
     document.getElementById("odoParz").textContent = state.odoParzKm.toFixed(3);
@@ -225,6 +231,14 @@ function refreshTableUI() {
     state.markerByDisplayId.forEach(m => map.removeLayer(m));
     state.markerByDisplayId.clear();
 
+    // Ricalcola i parziali basandosi sui totali in ordine cronologico
+    let prevTot = 0;
+    const chronPoints = [...state.points].reverse();
+    chronPoints.forEach((p, i) => {
+        p.kmParz = (i === 0) ? p.kmTot : (p.kmTot - prevTot);
+        prevTot = p.kmTot;
+    });
+
     state.points.forEach((p, index) => {
         const displayId = state.points.length - index;
         const m = L.circleMarker([p.lat, p.lon], {radius:7, fillColor:"#4dd4ac", color:"#000", weight:2, fillOpacity:1}).addTo(map);
@@ -251,7 +265,7 @@ function refreshTableUI() {
 }
 
 function deletePoint(index) {
-    if(!confirm("Eliminare questo punto?")) return;
+    if(!confirm("Eliminare questo punto? I parziali verranno ricalcolati.")) return;
     state.points.splice(index, 1);
     refreshTableUI();
 }
@@ -290,9 +304,9 @@ document.getElementById("cameraInput").onchange = (e) => {
 };
 
 function exportCSV() {
-    let csv = "ID;ATT;KM_TOT;KM_PARZ;DIST_GHOST;MEDIA;ORA;PRERIL;NOTE;ALT;LAT_DEC;LON_DEC;LAT_DMS;LON_DMS\n";
+    let csv = "ID;ATT;KM_TOT;KM_PARZ;DIST_GHOST;MEDIA;ORA;PRERIL;NOTE;ALT;LAT_DEC;LON_DEC\n";
     state.points.slice().reverse().forEach((p, i) => {
-        csv += `${i+1};${p.att};${p.kmTot.toFixed(3).replace('.',',')};${p.kmParz.toFixed(3).replace('.',',')};${p.odoGhost.toFixed(3).replace('.',',')};${p.avg};${p.time};${p.preRil};${p.note};${p.alt};${p.lat.toFixed(6).replace('.',',')};${p.lon.toFixed(6).replace('.',',')};${formatDMS(p.lat,true)};${formatDMS(p.lon,false)}\n`;
+        csv += `${i+1};${p.att};${p.kmTot.toFixed(3).replace('.',',')};${p.kmParz.toFixed(3).replace('.',',')};${p.odoGhost.toFixed(3).replace('.',',')};${p.avg};${p.time};${p.preRil};${p.note};${p.alt};${p.lat.toFixed(6).replace('.',',')};${p.lon.toFixed(6).replace('.',',')}\n`;
     });
     download(new Blob([csv], {type:"text/csv"}), state.sessionName + ".csv");
 }
@@ -301,27 +315,35 @@ async function exportZIP() {
     const zip = new JSZip();
     let kml = `<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${state.sessionName}</name>`;
     
-    // Stile Traccia: Spessore 5, Colore Turchese Fluo (AABBGGRR)
     kml += `<Style id="trackStyle"><LineStyle><color>ccdbd44d</color><width>5</width></LineStyle></Style>`;
     kml += `<Style id="pntIcon"><IconStyle><Icon><href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href></Icon></IconStyle></Style>`;
     kml += `<Style id="camIcon"><IconStyle><Icon><href>http://maps.google.com/mapfiles/kml/shapes/camera.png</href></Icon></IconStyle></Style>`;
 
+    // CARTELLA TRACCE
+    kml += `<Folder><name>TRACCE</name>`;
     state.trackSegments.forEach((seg, i) => {
         if(seg.length > 1) {
             let coords = seg.map(p => `${p.lon},${p.lat},${p.alt||0}`).join(" ");
             kml += `<Placemark><name>T${i+1}</name><styleUrl>#trackStyle</styleUrl><LineString><coordinates>${coords}</coordinates></LineString></Placemark>`;
         }
     });
+    kml += `</Folder>`;
 
+    // CARTELLA PUNTI
+    kml += `<Folder><name>PUNTI</name>`;
     state.points.slice().reverse().forEach((p, i) => {
         kml += `<Placemark><name>${i+1}</name><styleUrl>#pntIcon</styleUrl><Point><coordinates>${p.lon},${p.lat},${p.alt}</coordinates></Point></Placemark>`;
     });
+    kml += `</Folder>`;
 
+    // CARTELLA FOTO
+    kml += `<Folder><name>FOTO</name>`;
     state.photos.forEach((ph, i) => {
         const name = `foto_${i+1}.jpg`;
         zip.file("files/"+name, ph.dataUrl.split(',')[1], {base64:true});
         kml += `<Placemark><name>F${i+1}</name><styleUrl>#camIcon</styleUrl><description><![CDATA[<img src="files/${name}" width="400"/>]]></description><Point><coordinates>${ph.lon},${ph.lat},0</coordinates></Point></Placemark>`;
     });
+    kml += `</Folder>`;
 
     kml += `</Document></kml>`;
     zip.file(state.sessionName + ".kml", kml);
@@ -340,6 +362,7 @@ function download(blob, name) {
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; a.click();
 }
 
+// GESTIONE MODAL KM (FIXED)
 function openKmModal() {
     const val = state.odoTotKm.toFixed(3).padStart(7, '0');
     document.getElementById("fullKmInput").value = state.odoTotKm.toFixed(3);
@@ -365,9 +388,8 @@ function stepDigit(idx, delta) {
     syncInputFromDigits();
 }
 function syncInputFromDigits() {
-    let s = "";
-    let digitIdx = 0;
-    const currentVal = state.odoTotKm.toFixed(3).padStart(7, '0');
+    let s = ""; let digitIdx = 0;
+    const currentVal = parseFloat(document.getElementById("fullKmInput").value || 0).toFixed(3).padStart(7, '0');
     [...currentVal].forEach(char => {
         if(char === '.') s += '.';
         else { s += document.getElementById(`digit-${digitIdx}`).innerText; digitIdx++; }
