@@ -2,8 +2,8 @@
 <html lang="it">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1.0, user-scalable=no">
-<title>Roadbook Logger Pro v4</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1.0, user-scalable=yes">
+<title>Roadbook Logger Pro v5</title>
 
 <meta name="theme-color" content="#0b0f14">
 <link rel="manifest" href="./manifest.json">
@@ -19,7 +19,8 @@
   --bg:#0b0f14; --card:#121826; --muted:#9fb0c3; --btn:#1b2536;
   --line:#223; --ok:#4dd4ac; --warn:#ffcc66; --danger:#ff6b6b;
 }
-body{margin:0;background:var(--bg);color:#e8eef6;font-family:system-ui;user-select:none;touch-action:manipulation;}
+/* Permesso lo scroll verticale */
+body{margin:0;background:var(--bg);color:#e8eef6;font-family:system-ui;user-select:none; overflow-y: auto !important; height: auto !important;}
 .card{background:var(--card);border-radius:14px;padding:10px;margin:8px}
 .top-row{display:flex;gap:8px;align-items:stretch}
 .trip-card{flex:1; cursor:pointer;}
@@ -34,7 +35,7 @@ body{margin:0;background:var(--bg);color:#e8eef6;font-family:system-ui;user-sele
 #recenter{ position:absolute; bottom:12px; right:12px; z-index:2000; background:var(--btn); border-radius:50%; width:40px; height:40px; display:flex; align-items:center; justify-content:center; font-size:20px; }
 table{width:100%; border-collapse:collapse; font-size:10px}
 td,th{border-bottom:1px solid var(--line); padding:6px; text-align:center;}
-tr.highlight { background: rgba(77, 212, 172, 0.2); transition: background 0.5s; }
+tr.highlight { background: rgba(255, 204, 102, 0.4) !important; transition: background 0.5s; }
 
 .modal { display:none; position:fixed; z-index:10000; left:0; top:0; width:100%; height:100%; background:rgba(0,0,0,0.9); justify-content:center; align-items:center; }
 .modal-content { background:var(--card); padding:20px; border-radius:15px; text-align:center; width:90%; }
@@ -72,13 +73,13 @@ input[type="text"] { background:var(--btn); border:1px solid #333; color:#fff; p
 
 <div class="card"><div id="map"><div id="recenter" onclick="recenter()">🎯</div></div></div>
 
-<div class="card" onclick="addPoint()">
+<div class="card" id="parzialeBox" onclick="addPoint()">
   <div class="label">TRIP PARZIALE (TAP = NUOVA NOTA)</div>
   <div class="big" id="odoParz">0.000</div>
 </div>
 
 <div class="card" style="overflow-x:auto">
-    <table id="mainTable">
+    <table>
         <thead>
             <tr>
                 <th>#</th><th>Att</th><th>KM Tot</th><th>KM Parz</th><th>Media</th><th>Ora</th><th>PreRil</th><th>Note</th><th></th>
@@ -88,10 +89,10 @@ input[type="text"] { background:var(--btn); border:1px solid #333; color:#fff; p
     </table>
 </div>
 
-<div class="card" style="display:flex; gap:10px;">
-  <button onclick="exportCSV()" style="flex:1; padding:12px;">Excel (CSV)</button>
-  <button onclick="exportGPX()" style="flex:1; padding:12px;">GPX</button>
-  <button onclick="exportKMZ()" style="flex:1; padding:12px;">KMZ</button>
+<div class="card" style="display:flex; gap:10px; padding-bottom:30px;">
+  <button onclick="exportCSV()" style="flex:1; padding:15px; font-weight:bold;">Excel (CSV)</button>
+  <button onclick="exportGPX()" style="flex:1; padding:15px; font-weight:bold;">GPX</button>
+  <button onclick="exportZIP()" style="flex:1; padding:15px; font-weight:bold; background:var(--ok); color:#000;">ZIP (KMZ+Foto)</button>
 </div>
 
 <div id="kmModal" class="modal">
@@ -116,7 +117,7 @@ const state = {
   lastPointTime: null, lastPointGhostDist: 0,
   trackSegments: [], currentSegment: null, trackLines: [],
   points: [], photos: [], 
-  markerByPointId: new Map()
+  markerByDisplayId: new Map()
 };
 
 const map = L.map("map").setView([45, 9], 13);
@@ -127,49 +128,31 @@ function initApp() {
     initLongPress();
 }
 
-// RESET TOTALE 3 SECONDI
 function initLongPress() {
     const el = document.getElementById('mainTripBox');
     let timer;
-    const start = (e) => {
-        timer = setTimeout(() => {
-            state.odoTotKm = 0;
-            updateUI();
-            if(navigator.vibrate) navigator.vibrate(200);
-            toast("Trip Totale Azzerato");
-        }, 3000);
-    };
+    const start = () => { timer = setTimeout(() => { state.odoTotKm = 0; updateUI(); toast("Trip Totale Azzerato"); }, 3000); };
     const end = () => clearTimeout(timer);
-    el.addEventListener('touchstart', start);
-    el.addEventListener('touchend', end);
-    el.addEventListener('mousedown', start);
-    el.addEventListener('mouseup', end);
+    el.onmousedown = start; el.onmouseup = end; el.ontouchstart = start; el.ontouchend = end;
 }
 
 function setSessionName() {
-    let n = prompt("Nome del file esportazione:", state.sessionName);
+    let n = prompt("Nome del file:", state.sessionName);
     if(n) state.sessionName = n.replace(/\s+/g, '_');
 }
 
 function resetGhost() {
-    if(confirm("Vuoi azzerare il Ghost Trip per il calcolo delle medie?")) {
-        state.odoGhostKm = 0;
-        state.lastPointGhostDist = 0;
-        updateUI();
-    }
+    if(confirm("Azzerare Ghost Trip?")) { state.odoGhostKm = 0; state.lastPointGhostDist = 0; updateUI(); }
 }
 
 function startGPS() {
-    navigator.geolocation.watchPosition(onFix, (e) => console.log(e), { enableHighAccuracy: true, maximumAge: 0 });
-    if ('wakeLock' in navigator) navigator.wakeLock.request('screen');
+    navigator.geolocation.watchPosition(onFix, null, { enableHighAccuracy: true, maximumAge: 0 });
 }
 
 function onFix(pos) {
     const crd = pos.coords;
     const now = Date.now();
-    if (state.lastFixTimeMs) {
-        document.getElementById("hz").textContent = (1000 / (now - state.lastFixTimeMs)).toFixed(1) + " Hz";
-    }
+    if (state.lastFixTimeMs) document.getElementById("hz").textContent = (1000 / (now - state.lastFixTimeMs)).toFixed(1) + " Hz";
     state.lastFixTimeMs = now;
     document.getElementById("acc").textContent = "±" + Math.round(crd.accuracy) + "m";
     document.getElementById("fix").textContent = "FIX OK";
@@ -180,8 +163,7 @@ function onFix(pos) {
             let dKm = dist / 1000;
             state.odoGhostKm += dKm;
             if (state.recording) {
-                state.odoTotKm += dKm;
-                state.odoParzKm += dKm;
+                state.odoTotKm += dKm; state.odoParzKm += dKm;
                 if (state.currentSegment) {
                     state.currentSegment.push({lat: crd.latitude, lon: crd.longitude, alt: crd.altitude, timeMs: now});
                     state.trackLines[state.trackLines.length-1].addLatLng([crd.latitude, crd.longitude]);
@@ -195,13 +177,11 @@ function onFix(pos) {
 
 function calculateDistance(lat1, lon1, lat2, lon2) {
     const R = 6371000;
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const dLat = (lat2-lat1)*Math.PI/180; const dLon = (lon2-lon1)*Math.PI/180;
     const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
-// FORMATO RICHIESTO: N46 12.345
 function formatDMS(val, isLat) {
     const absVal = Math.abs(val);
     const d = Math.floor(absVal);
@@ -217,40 +197,35 @@ function updateUI() {
 }
 
 function addPoint() {
-    if (!state.lastFix) return toast("No GPS Fix");
+    if (!state.lastFix) return;
     let now = Date.now();
     let distFromLast = state.odoGhostKm - state.lastPointGhostDist;
-    let timeFromLast = state.lastPointTime ? (now - state.lastPointTime) / 3600000 : 0;
-    let avg = (timeFromLast > 0) ? (distFromLast / timeFromLast).toFixed(1) : "0.0";
+    let timeFromLast = state.lastPointTime ? (now - state.lastPointTime)/3600000 : 0;
+    let avg = (timeFromLast > 0) ? (distFromLast/timeFromLast).toFixed(1) : "0.0";
 
-    const p = {
-        kmTot: state.odoTotKm, kmParz: state.odoParzKm,
-        avg: avg, time: new Date().toLocaleTimeString(),
+    state.points.unshift({
+        kmTot: state.odoTotKm, kmParz: state.odoParzKm, odoGhost: state.odoGhostKm,
+        avg, time: new Date().toLocaleTimeString(),
         lat: state.lastFix.lat, lon: state.lastFix.lon, 
         alt: state.lastFix.alt ? Math.round(state.lastFix.alt) : 0,
         att: "", preRil: "", note: ""
-    };
-
-    state.points.unshift(p);
+    });
     state.lastPointGhostDist = state.odoGhostKm;
     state.lastPointTime = now;
     state.odoParzKm = 0;
-    
-    updateUI();
     renderTable();
 }
 
 function renderTable() {
     const tb = document.getElementById("points");
-    state.markerByPointId.forEach(m => map.removeLayer(m));
-    state.markerByPointId.clear();
+    state.markerByDisplayId.forEach(m => map.removeLayer(m));
+    state.markerByDisplayId.clear();
 
     tb.innerHTML = state.points.map((p, index) => {
         let displayId = state.points.length - index; 
         const m = L.circleMarker([p.lat, p.lon], {radius:7, fillColor:"#4dd4ac", color:"#000", weight:2, fillOpacity:1}).addTo(map);
-        m.bindPopup(`Punto ${displayId}`);
-        m.on('click', () => highlightRow(displayId));
-        state.markerByPointId.set(displayId, m);
+        m.on('click', () => { focusTable(displayId); m.bindPopup("Punto " + displayId).openPopup(); });
+        state.markerByDisplayId.set(displayId, m);
 
         return `
             <tr id="row-${displayId}" onclick="focusMap(${p.lat}, ${p.lon}, ${displayId})">
@@ -270,10 +245,10 @@ function renderTable() {
 
 function focusMap(lat, lon, id) {
     map.setView([lat, lon], 17);
-    state.markerByPointId.get(id).openPopup();
+    state.markerByDisplayId.get(id).openPopup();
 }
 
-function highlightRow(id) {
+function focusTable(id) {
     const el = document.getElementById(`row-${id}`);
     if(el) {
         el.scrollIntoView({behavior:'smooth', block:'center'});
@@ -288,7 +263,7 @@ function deletePoint(index) {
 }
 
 function takePhoto() {
-    if (!state.lastFix) return toast("No GPS");
+    if (!state.lastFix) return;
     document.getElementById("cameraInput").click();
 }
 
@@ -299,49 +274,44 @@ document.getElementById("cameraInput").onchange = (e) => {
     reader.onload = () => {
         const photo = { lat:state.lastFix.lat, lon:state.lastFix.lon, dataUrl:reader.result };
         state.photos.push(photo);
-        L.marker([photo.lat, photo.lon]).addTo(map);
+        L.marker([photo.lat, photo.lon], {icon: L.icon({iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png', iconSize: [25, 41], iconAnchor: [12, 41]})}).addTo(map);
         toast("Foto Salvata");
     };
     reader.readAsDataURL(file);
 };
 
-// EXPORT EXCEL CON FORMATO RICHIESTO
 function exportCSV() {
-    let csv = "ID;ATT;KM_TOT;KM_PARZ;MEDIA;ORA;PRERIL;NOTE;ALTITUDINE;LAT_DEC;LON_DEC;LAT_DMS;LON_DMS\n";
+    let csv = "ID;ATT;KM_TOT;KM_PARZ;MEDIA;ORA;PRERIL;NOTE;ALT;LAT_DEC;LON_DEC;LAT_DMS;LON_DMS;DIST_GHOST\n";
     state.points.slice().reverse().forEach((p, i) => {
-        let latDec = p.lat.toFixed(6).replace('.', ',');
-        let lonDec = p.lon.toFixed(6).replace('.', ',');
-        csv += `${i+1};${p.att};${p.kmTot.toFixed(3).replace('.',',')};${p.kmParz.toFixed(3).replace('.',',')};${p.avg};${p.time};${p.preRil};${p.note};${p.alt};${latDec};${lonDec};${formatDMS(p.lat,true)};${formatDMS(p.lon,false)}\n`;
+        csv += `${i+1};${p.att};${p.kmTot.toFixed(3).replace('.',',')};${p.kmParz.toFixed(3).replace('.',',')};${p.avg};${p.time};${p.preRil};${p.note};${p.alt};${p.lat.toFixed(6).replace('.',',')};${p.lon.toFixed(6).replace('.',',')};${formatDMS(p.lat,true)};${formatDMS(p.lon,false)};${p.odoGhost.toFixed(3).replace('.',',')}\n`;
     });
-    download(csv, state.sessionName + ".csv", "text/csv");
+    download(new Blob([csv], {type:"text/csv"}), state.sessionName + ".csv");
 }
 
-async function exportKMZ() {
+async function exportZIP() {
     const zip = new JSZip();
     let kml = `<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${state.sessionName}</name>`;
-    state.points.forEach((p, i) => {
-        kml += `<Placemark><name>Punto ${state.points.length-i}</name><Point><coordinates>${p.lon},${p.lat},${p.alt}</coordinates></Point></Placemark>`;
-    });
+    state.points.forEach((p, i) => { kml += `<Placemark><name>Pnt ${state.points.length-i}</name><Point><coordinates>${p.lon},${p.lat},${p.alt}</coordinates></Point></Placemark>`; });
     state.photos.forEach((ph, i) => {
         const name = `foto_${i}.jpg`;
         zip.file("files/"+name, ph.dataUrl.split(',')[1], {base64:true});
         kml += `<Placemark><name>Foto ${i}</name><description><![CDATA[<img src="files/${name}" width="300"/>]]></description><Point><coordinates>${ph.lon},${ph.lat},0</coordinates></Point></Placemark>`;
     });
     kml += `</Document></kml>`;
-    zip.file("doc.kml", kml);
+    zip.file(state.sessionName + ".kml", kml);
     const content = await zip.generateAsync({type:"blob"});
-    download(content, state.sessionName + ".kmz", "application/vnd.google-earth.kmz");
+    download(content, state.sessionName + ".zip");
 }
 
 function exportGPX() {
     let gpx = `<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">`;
     state.points.forEach((p, i) => { gpx += `<wpt lat="${p.lat}" lon="${p.lon}"><ele>${p.alt}</ele><name>Punto ${state.points.length-i}</name></wpt>`; });
     gpx += `</gpx>`;
-    download(gpx, state.sessionName + ".gpx", "application/gpx+xml");
+    download(new Blob([gpx], {type:"application/gpx+xml"}), state.sessionName + ".gpx");
 }
 
-function download(content, name, type) {
-    const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([content], {type})); a.download = name; a.click();
+function download(blob, name) {
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; a.click();
 }
 
 function openKmModal() {
@@ -351,9 +321,8 @@ function openKmModal() {
     container.innerHTML = '';
     let digitIdx = 0;
     [...val].forEach((char) => {
-        if(char === '.') {
-            container.insertAdjacentHTML('beforeend', '<div class="digit-val">.</div>');
-        } else {
+        if(char === '.') container.insertAdjacentHTML('beforeend', '<div class="digit-val">.</div>');
+        else {
             const i = digitIdx;
             container.insertAdjacentHTML('beforeend', `<div class="digit-col"><button class="step-btn" onclick="stepDigit(${i}, 1)">+</button><div class="digit-val" id="digit-${i}">${char}</div><button class="step-btn" onclick="stepDigit(${i}, -1)">-</button></div>`);
             digitIdx++;
@@ -365,20 +334,12 @@ function stepDigit(idx, delta) {
     const el = document.getElementById(`digit-${idx}`);
     el.innerText = (parseInt(el.innerText) + delta + 10) % 10;
 }
-function saveKmModal() {
-    state.odoTotKm = parseFloat(document.getElementById("fullKmInput").value);
-    updateUI(); closeKmModal();
-}
+function saveKmModal() { state.odoTotKm = parseFloat(document.getElementById("fullKmInput").value); updateUI(); closeKmModal(); }
 function closeKmModal() { document.getElementById("kmModal").style.display = 'none'; }
 function toggleRec() {
     state.recording = !state.recording;
     document.getElementById("recBtn").textContent = state.recording ? "REC" : "PAUSA";
     document.getElementById("recBtn").className = state.recording ? "rec" : "pause";
-    if (state.recording) {
-        state.currentSegment = [];
-        state.trackSegments.push(state.currentSegment);
-        state.trackLines.push(L.polyline([], {color: "#4dd4ac", weight:4}).addTo(map));
-    }
 }
 function toast(m) { let t = document.getElementById("toast"); t.textContent = m; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 2000); }
 function recenter() { if(state.lastFix) map.setView([state.lastFix.lat, state.lastFix.lon], 16); }
