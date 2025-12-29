@@ -479,16 +479,13 @@ function exportGPX() {
 function download(blob, name) { const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; a.click(); }
 
 function openKmModal() {
-    // simple prompt to set total trip (no add/sub parsing)
-    const v = prompt('Imposta Trip Totale (km):', state.odoTotKm.toFixed(3));
-    if (v === null) return;
-    const n = parseFloat(String(v).replace(',', '.'));
-    if (!isNaN(n) && n >= 0) {
-        state.odoTotKm = n;
-        updateUI(); saveState(); toast('Trip Totale aggiornato');
-    } else {
-        toast('Valore non valido');
-    }
+    // restore modal digit-selector from GM: populate input, render digits, show modal
+    const initial = parseFloat((state.odoTotKm || 0)).toFixed(3).padStart(7, '0');
+    document.getElementById('fullKmInput').value = parseFloat(initial).toFixed(3);
+    renderDigitSelectors(initial);
+    document.getElementById('kmModal').style.display = 'flex';
+    // ensure digits stay in sync if user types
+    syncDigitsFromInput();
 }
 function renderDigitSelectors(val) {
     const container = document.getElementById("digitSelectors");
