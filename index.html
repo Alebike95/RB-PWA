@@ -166,7 +166,7 @@ button { border-radius: 14px !important; }
     <table id="mainTable">
         <thead>
             <tr>
-                <th>#</th><th>Att</th><th>KM Tot</th><th>KM Parz</th><th>GHOST</th><th>Media</th><th>Ora</th><th>PreRil</th><th>Note</th><th></th>
+                <th>#</th><th>Att</th><th>KM Tot</th><th>KM Parz</th><th>Media</th><th>Ora</th><th>PreRil</th><th>Note</th><th></th>
             </tr>
         </thead>
         <tbody id="pointsBody"></tbody>
@@ -354,25 +354,34 @@ function onFix(pos) {
         // ghost always counts
         state.odoGhostKm += dKm;
 
-        // apply recording filters for totals
-        if (crd.accuracy <= GPS_MAX_ACCURACY) {
-            if (dist >= GPS_MIN_DISTANCE && dist <= GPS_MAX_JUMP) {
-                if (state.recording) {
-                    state.odoTotKm += dKm; state.odoParzKm += dKm;
-                    if (runtime.currentPolyline) {
-                        const pnt = {lat: crd.latitude, lon: crd.longitude, alt: crd.altitude, timeMs: now};
-                        state.trackSegments[state.trackSegments.length-1].push(pnt);
-                        runtime.currentPolyline.addLatLng([crd.latitude, crd.longitude]);
-                    }
-                    if (now - runtime.lastSaveTime > SAVE_INTERVAL_MS) { saveState(); updateStorageInfo(); }
-                }
-            } else if (dist > GPS_MAX_JUMP) {
-                console.log("GPS jump filtrato: " + Math.round(dist) + "m");
-                // update lastFix to new location but don't count
-                state.lastFix = { lat: crd.latitude, lon: crd.longitude, alt: crd.altitude, timeMs: now };
-                return;
-            }
+        // filter small drift
+        if (dist < GPS_MIN_DISTANCE) {
+            // too small movement — update lastFix and don't count
+            state.lastFix = { lat: crd.latitude, lon: crd.longitude, alt: crd.altitude, timeMs: now };
+            updateUI();
+            return;
         }
+
+        // filter large jumps (anomalies)
+        if (dist > GPS_MAX_JUMP) {
+            console.log("GPS jump filtrato: " + Math.round(dist) + "m");
+            state.lastFix = { lat: crd.latitude, lon: crd.longitude, alt: crd.altitude, timeMs: now };
+            updateUI();
+            return;
+        }
+
+        // count distance into totals when recording
+        if (state.recording) {
+            state.odoTotKm += dKm;
+            state.odoParzKm += dKm;
+            if (runtime.currentPolyline) {
+                const pnt = {lat: crd.latitude, lon: crd.longitude, alt: crd.altitude, timeMs: now};
+                state.trackSegments[state.trackSegments.length-1].push(pnt);
+                runtime.currentPolyline.addLatLng([crd.latitude, crd.longitude]);
+            }
+            if (now - runtime.lastSaveTime > SAVE_INTERVAL_MS) { saveState(); updateStorageInfo(); }
+        }
+
         updateUI();
     }
 
@@ -432,15 +441,14 @@ function refreshTableUI() {
         row.onclick = function(){ map.setView([p.lat,p.lon], 17); m.openPopup(); highlightRow(displayId); };
 
         row.innerHTML = '<td>' + displayId + '</td>' +
-                        '<td><input type="text" oninput="state.points[' + index + '].att=this.value; saveState()" value="' + p.att + '"></td>' +
-                        '<td style="font-weight:bold">' + p.kmTot.toFixed(3) + '</td>' +
-                        '<td>' + p.kmParz.toFixed(3) + '</td>' +
-                        '<td>' + p.odoGhost.toFixed(3) + '</td>' +
-                        '<td style="color:var(--warn)">' + p.avg + '</td>' +
-                        '<td>' + p.time + '</td>' +
-                        '<td><input type="text" oninput="state.points[' + index + '].preRil=this.value; saveState()" value="' + p.preRil + '"></td>' +
-                        '<td><input type="text" oninput="state.points[' + index + '].note=this.value; saveState()" value="' + p.note + '"></td>' +
-                        '<td onclick="event.stopPropagation(); deletePoint(' + index + ')">🗑</td>';
+                '<td><input type="text" oninput="state.points[' + index + '].att=this.value; saveState()" value="' + p.att + '"></td>' +
+                '<td style="font-weight:bold">' + p.kmTot.toFixed(3) + '</td>' +
+                '<td>' + p.kmParz.toFixed(3) + '</td>' +
+                '<td style="color:var(--warn)">' + p.avg + '</td>' +
+                '<td>' + p.time + '</td>' +
+                '<td><input type="text" oninput="state.points[' + index + '].preRil=this.value; saveState()" value="' + p.preRil + '"></td>' +
+                '<td><input type="text" oninput="state.points[' + index + '].note=this.value; saveState()" value="' + p.note + '"></td>' +
+                '<td onclick="event.stopPropagation(); deletePoint(' + index + ')">🗑</td>';
 
         tb.appendChild(row);
     });
@@ -541,17 +549,22 @@ function syncDigitsFromInput(){ const val = parseFloat(document.getElementById('
 function saveKmModal(){ state.odoTotKm = parseFloat(document.getElementById('fullKmInput').value); updateUI(); saveState(); closeKmModal(); }
 function closeKmModal(){ document.getElementById('kmModal').style.display = 'none'; }
 
-function parseDeltaInput(text){ if (!text) return null; text = text.trim().toLowerCase(); // examples: "150 add", "-0.15km", "+200m"
-    // direct +/- with unit
-    const plusMinusMatch = text.match(/^([+-]?\d*\.?\d+)\s*(km|m)?$/);
-    if (plusMinusMatch){ const num = parseFloat(plusMinusMatch[1]); const unit = plusMinusMatch[2] || 'm'; const km = (unit === 'km') ? num : num/1000; return km; }
-    // with operation
-    const parts = text.split(/\s+/);
-    if (parts.length === 2){ let amt = parseFloat(parts[0]); if (isNaN(amt)) return null; const op = parts[1]; // default meters
-        if (parts[0].toLowerCase().endsWith('km')){ amt = parseFloat(parts[0]); return amt; }
-        if (parts[0].toLowerCase().endsWith('m')){ amt = parseFloat(parts[0]); return amt/1000; }
-        if (op === 'add' || op === '+' ) return amt/1000; if (op === 'sub' || op === 'remove' || op === '-') return -amt/1000; // assume meters
-    }
+function parseDeltaInput(text){
+    if (!text) return null;
+    text = String(text).trim().toLowerCase();
+    // patterns supported: "150 add", "+150m", "-0.15km", "150m", "0.15km"
+    // try +/- with optional unit
+    let m = text.match(/^([+-]?\d*\.?\d+)\s*(km|m)?$/);
+    if (m){ const num = parseFloat(m[1]); const unit = m[2] || 'm'; return (unit === 'km') ? num : num/1000; }
+
+    // try 'value op' like '150 add' or '150 sub'
+    m = text.match(/^(\d*\.?\d+)\s*(m|km)?\s*(add|sub|\+|\-)$/);
+    if (m){ let amt = parseFloat(m[1]); const unit = m[2] || 'm'; const op = m[3]; let km = (unit === 'km') ? amt : amt/1000; if (op === 'sub' || op === '-') km = -Math.abs(km); return km; }
+
+    // try 'add value' or 'sub value'
+    m = text.match(/^(add|sub)\s*([+-]?\d*\.?\d+)\s*(km|m)?$/);
+    if (m){ const op = m[1]; const amt = parseFloat(m[2]); const unit = m[3] || 'm'; let km = (unit === 'km') ? amt : amt/1000; if (op === 'sub') km = -Math.abs(km); return km; }
+
     return null;
 }
 
@@ -560,7 +573,12 @@ function applyDelta(){ const txt = document.getElementById('deltaInput').value; 
         if (m){ let amt = parseFloat(m[1]); const unit = m[2]; const op = m[3]; if (unit === 'km') km = amt; else km = amt/1000; if (op === 'sub' || op === '-') km = -Math.abs(km); }
     }
     if (km === null) { toast('Formato non riconosciuto'); return; }
-    state.odoTotKm = Math.max(0, state.odoTotKm + km); updateUI(); saveState(); toast('Aggiornato: ' + (km>=0?'+':'') + (km*1000).toFixed(0) + ' m'); document.getElementById('deltaInput').value = ''; }
+    // apply to total and partial (so user sees immediate effect)
+    state.odoTotKm = Math.max(0, state.odoTotKm + km);
+    state.odoParzKm = Math.max(0, state.odoParzKm + km);
+    updateUI(); saveState(); updateStorageInfo();
+    toast('Aggiornato: ' + (km>=0?'+':'') + (Math.round(km*1000)) + ' m');
+    document.getElementById('deltaInput').value = ''; }
 
 function toggleRec(){ state.recording = !state.recording; document.getElementById('recBtn').textContent = state.recording ? 'REC' : 'PAUSA'; document.getElementById('recBtn').className = state.recording ? 'rec' : 'pause'; document.getElementById('recIndicator').style.display = state.recording ? 'block' : 'none'; if (state.recording){ state.trackSegments.push([]); runtime.currentPolyline = L.polyline([], {color:'#4dd4ac', weight:4, opacity:0.8}).addTo(map); runtime.trackLines.push(runtime.currentPolyline); toast('▶️ Registrazione attiva'); } else { toast('⏸️ Pausa'); } saveState(); }
 
