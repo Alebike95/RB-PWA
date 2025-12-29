@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1.0, user-scalable=yes">
-<title>Roadbook Logger Pro v12.1.1</title>
+<title>Roadbook Logger Pro v12.1.2</title>
 
 <meta name="theme-color" content="#0b0f14">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -164,7 +164,7 @@ input[type="text"] { background:var(--btn); border:1px solid #333; color:#fff; p
 <body onload="initApp()">
 
 <div class="top-row">
-  <div class="ver-badge">v12.1.1</div>
+    <div class="ver-badge">v12.1.2</div>
   <div class="card trip-card" id="mainTripBox" onclick="openKmModal()">
     <div class="label">TRIP TOTALE (Hold 3s to Reset)</div>
     <div class="big" id="odoTot">0.000</div>
@@ -180,6 +180,8 @@ input[type="text"] { background:var(--btn); border:1px solid #333; color:#fff; p
   <div class="gps-info">
     <span id="fix">WAIT GPS...</span> <span id="acc">±—</span> <span id="hz">— Hz</span>
   </div>
+    <button id="simBtn" onclick="toggleGpsSim()" style="background:#333;color:#fff;padding:8px;border-radius:10px;">SIM GPS</button>
+    <div id="simStatus" style="font-size:11px;color:var(--muted);padding-left:8px">SIM: OFF</div>
   <button id="recBtn" class="pause" onclick="toggleRec()">PAUSA</button>
 </div>
 
@@ -226,7 +228,7 @@ input[type="text"] { background:var(--btn); border:1px solid #333; color:#fff; p
 <div id="toast" class="toast"></div>
 
 <script>
-const APP_VERSION = "12.1.1";
+const APP_VERSION = "12.1.2";
 
 let state = {
   recording: false, lastFix: null, lastFixTimeMs: null, sessionName: "Roadbook_Log",
@@ -316,6 +318,39 @@ function setSessionName() {
 
 function startGPS() {
     navigator.geolocation.watchPosition(onFix, null, { enableHighAccuracy: true, maximumAge: 0 });
+}
+
+// --- GPS simulator for testing (generates synthetic fixes) ---
+runtime.gpsSim = { running: false, intervalId: null, angle: 0 };
+
+function toggleGpsSim() {
+    if (runtime.gpsSim.running) stopGpsSim(); else startGpsSim();
+}
+
+function startGpsSim(opts = {}) {
+    const intervalMs = opts.intervalMs || 1000;
+    const radiusDeg = opts.radiusDeg || 0.001; // ~111m
+    const center = state.lastFix ? { lat: state.lastFix.lat, lon: state.lastFix.lon } : map.getCenter();
+    runtime.gpsSim.center = center;
+    runtime.gpsSim.running = true;
+    runtime.gpsSim.angle = 0;
+    document.getElementById('simBtn').textContent = 'SIM ON';
+    document.getElementById('simStatus').textContent = 'SIM: ON';
+    runtime.gpsSim.intervalId = setInterval(() => {
+        runtime.gpsSim.angle += 20; // degrees per step
+        const a = runtime.gpsSim.angle * Math.PI/180;
+        const lat = runtime.gpsSim.center.lat + radiusDeg * Math.cos(a);
+        const lon = runtime.gpsSim.center.lon + radiusDeg * Math.sin(a);
+        const fakePos = { coords: { latitude: lat, longitude: lon, accuracy: 5, altitude: 0 } };
+        try { onFix(fakePos); } catch(e) { console.error('sim onFix err', e); }
+    }, intervalMs);
+}
+
+function stopGpsSim() {
+    runtime.gpsSim.running = false;
+    if (runtime.gpsSim.intervalId) { clearInterval(runtime.gpsSim.intervalId); runtime.gpsSim.intervalId = null; }
+    document.getElementById('simBtn').textContent = 'SIM GPS';
+    document.getElementById('simStatus').textContent = 'SIM: OFF';
 }
 
 function onFix(pos) {
